@@ -3,7 +3,8 @@ pub const ALGORITHM_NAME: &str = "ED25519_SHA2_512";
 use super::{KeyGenOption, SignatureScheme};
 #[cfg(any(feature = "x25519", feature = "x25519_asm"))]
 use ed25519_dalek::SecretKey as SK;
-use ed25519_dalek::{Keypair, PublicKey as PK, Signature};
+use ed25519_dalek::Digest as DG;
+use ed25519_dalek::{Keypair, PublicKey as PK, Signature, Sha512};
 pub use ed25519_dalek::{
     EXPANDED_SECRET_KEY_LENGTH as PRIVATE_KEY_SIZE, PUBLIC_KEY_LENGTH as PUBLIC_KEY_SIZE,
     SIGNATURE_LENGTH as SIGNATURE_SIZE,
@@ -135,9 +136,13 @@ impl SignatureScheme for Ed25519Sha512 {
         ))
     }
     fn sign(&self, message: &[u8], sk: &PrivateKey) -> Result<Vec<u8>, CryptoError> {
-        let kp =
+        let kp = 
             Keypair::from_bytes(&sk[..]).map_err(|e| CryptoError::KeyGenError(e.to_string()))?;
-        Ok(kp.sign(message).to_bytes().to_vec())
+        let mut prehashed = Sha512::new();
+        prehashed.update(message);
+        Ok(kp.sign_prehashed(prehashed, None)
+            .map_err(|e| CryptoError::SigningError(e.to_string()))?
+            .to_bytes().to_vec())
     }
     fn verify(
         &self,
@@ -146,9 +151,15 @@ impl SignatureScheme for Ed25519Sha512 {
         pk: &PublicKey,
     ) -> Result<bool, CryptoError> {
         let p = PK::from_bytes(&pk[..]).map_err(|e| CryptoError::ParseError(e.to_string()))?;
+        let mut array_signature: [u8; 64] = [0; 64];
+        for b in 0..64 {
+            array_signature[b] = signature[b];
+        }
         let s =
-            Signature::from_bytes(signature).map_err(|e| CryptoError::ParseError(e.to_string()))?;
-        p.verify(message, &s)
+            Signature::new(array_signature);
+        let prehashed = Sha512::new();
+        // prehashed.chain(message);
+        p.verify_prehashed(prehashed.chain(message), None, &s)
             .map_err(|e| CryptoError::SigningError(e.to_string()))?;
         Ok(true)
     }
